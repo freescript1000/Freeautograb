@@ -1,1 +1,445 @@
-loadstring(game:HttpGet("https://raw.githubusercontent.com/freescript1000/Freeautograb/refs/heads/main/Rosefreeautograb"))()
+print("ROSE AutoSteal - Optimizado")
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local LP = Players.LocalPlayer
+local pg = LP:WaitForChild("PlayerGui")
+
+local getconnections = getconnections or (getgenv and getgenv().getconnections)
+
+-- ============================================================
+-- CONFIGURACIÓN
+-- ============================================================
+local Steal = {
+	AutoStealEnabled = true,
+	StealRadius = 60,
+	StealDuration = 1.3,
+	Mode = 4,
+	Data = {},
+}
+local STEAL_MODE_CFG = {
+	[1] = { threshold = 0.90, nearDist = 14 },
+	[2] = { threshold = 0.85, nearDist = 12 },
+	[3] = { threshold = 0.80, nearDist = 11 },
+	[4] = { threshold = 0.75, nearDist = 10 },
+}
+local isStealing = false
+local stealConn = nil
+
+local progressFill, title, discordLbl
+
+-- ============================================================
+-- FUNCIONES PRINCIPALES OPTIMIZADAS
+-- ============================================================
+local function getStealHRP()
+	local c = LP.Character
+	if not c then return nil end
+	return c:FindFirstChild("HumanoidRootPart") or c:FindFirstChild("UpperTorso")
+end
+
+local function isMyPlotByName(plotName)
+	local plots = workspace:FindFirstChild("Plots")
+	if not plots then return false end
+	local plot = plots:FindFirstChild(plotName)
+	if not plot then return false end
+	local sign = plot:FindFirstChild("PlotSign")
+	if not sign then return false end
+	local yb = sign:FindFirstChild("YourBase")
+	return yb and yb:IsA("BillboardGui") and yb.Enabled
+end
+
+local function getPromptPosition(prompt)
+	if not prompt then return nil end
+	local p = prompt.Parent
+	while p and p ~= workspace do
+		if p:IsA("BasePart") then return p.Position end
+		p = p.Parent
+	end
+	return nil
+end
+
+-- Cache para búsquedas de prompts
+local promptCache = {}
+local cacheTime = 0
+
+local function findNearestPrompt()
+	local hrp = getStealHRP()
+	if not hrp then return nil end
+	
+	local now = tick()
+	if now - cacheTime < 0.5 then
+		if promptCache.prompt and promptCache.prompt.Parent then
+			local pos = getPromptPosition(promptCache.prompt)
+			if pos then
+				local d = (pos - hrp.Position).Magnitude
+				if d <= Steal.StealRadius then
+					return promptCache.prompt
+				end
+			end
+		end
+	end
+	cacheTime = now
+	
+	local nearest, dist = nil, math.huge
+	local plots = workspace:FindFirstChild("Plots")
+	
+	if plots then
+		for _, plot in ipairs(plots:GetChildren()) do
+			if isMyPlotByName(plot.Name) then continue end
+			local pods = plot:FindFirstChild("AnimalPodiums")
+			if not pods then continue end
+			for _, pod in ipairs(pods:GetChildren()) do
+				local base = pod:FindFirstChild("Base")
+				if not base then continue end
+				local spawn = base:FindFirstChild("Spawn")
+				if not spawn then continue end
+				local d = (spawn.Position - hrp.Position).Magnitude
+				if d <= Steal.StealRadius and d < dist then
+					local att = spawn:FindFirstChild("PromptAttachment")
+					if att then
+						for _, p in ipairs(att:GetChildren()) do
+							if p:IsA("ProximityPrompt") and p.ActionText then
+								local text = p.ActionText:lower()
+								if text:find("steal") or text:find("robar") or text:find("take") then
+									nearest, dist = p, d
+								end
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	if not nearest then
+		if math.random(1, 3) == 1 then
+			for _, prompt in ipairs(workspace:GetDescendants()) do
+				if prompt:IsA("ProximityPrompt") and prompt.ActionText then
+					local text = prompt.ActionText:lower()
+					if text:find("steal") or text:find("robar") or text:find("take") or text:find("brainrot") then
+						local pos = getPromptPosition(prompt)
+						if pos then
+							local d = (pos - hrp.Position).Magnitude
+							if d <= Steal.StealRadius and d < dist then
+								nearest, dist = prompt, d
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	if nearest then
+		promptCache.prompt = nearest
+	else
+		promptCache.prompt = nil
+	end
+	
+	return nearest
+end
+
+local function setBar(p)
+	p = math.clamp(p or 0, 0, 1)
+	if progressFill then 
+		progressFill.Size = UDim2.new(p, 0, 1, 0)
+	end
+	local pct = math.floor(p * 100)
+	if title then
+		title.Text = string.format("%d%% | ROSE Auto Steal", pct)
+	end
+end
+
+-- ============================================================
+-- EXECUTE STEAL
+-- ============================================================
+local function executeSteal(prompt)
+	if isStealing or not Steal.AutoStealEnabled then return end
+	if not prompt then return end
+	
+	if not Steal.Data[prompt] then
+		Steal.Data[prompt] = { hold = {}, trigger = {}, ready = true }
+		if getconnections then
+			for _, c in ipairs(getconnections(prompt.PromptButtonHoldBegan) or {}) do
+				if c.Function then table.insert(Steal.Data[prompt].hold, c.Function) end
+			end
+			for _, c in ipairs(getconnections(prompt.Triggered) or {}) do
+				if c.Function then table.insert(Steal.Data[prompt].trigger, c.Function) end
+			end
+		end
+	end
+	
+	local data = Steal.Data[prompt]
+	if not data.ready then return end
+	data.ready = false
+	isStealing = true
+	
+	task.spawn(function()
+		for _, f in ipairs(data.hold) do pcall(f) end
+	end)
+	
+	local cfg = STEAL_MODE_CFG[Steal.Mode] or STEAL_MODE_CFG[4]
+	local threshold = cfg.threshold
+	local nearDist = cfg.nearDist
+	local totalTime = tonumber(Steal.StealDuration) or 1.3
+	local timeToThreshold = totalTime * threshold
+	local timeAfterThreshold = totalTime - timeToThreshold
+	local startTime = tick()
+	
+	while tick() - startTime < timeToThreshold do
+		if not Steal.AutoStealEnabled then
+			isStealing = false; data.ready = true; setBar(0); return
+		end
+		setBar(math.clamp((tick() - startTime) / totalTime, 0, threshold))
+		task.wait()
+	end
+	setBar(threshold)
+	
+	local stillNear = false
+	local hrp = getStealHRP()
+	if hrp then
+		local targetPos = getPromptPosition(prompt)
+		if targetPos and (targetPos - hrp.Position).Magnitude <= nearDist then
+			stillNear = true
+		end
+	end
+	
+	if not stillNear then
+		local holdStart = tick()
+		while tick() - holdStart < 4 do
+			if not Steal.AutoStealEnabled then
+				isStealing = false; data.ready = true; setBar(0); return
+			end
+			setBar(threshold)
+			local hrp2 = getStealHRP()
+			if hrp2 then
+				local tp = getPromptPosition(prompt)
+				if tp and (tp - hrp2.Position).Magnitude <= nearDist then
+					stillNear = true
+					break
+				end
+			end
+			task.wait()
+		end
+		if not stillNear then
+			isStealing = false; data.ready = true; setBar(0); return
+		end
+	end
+	
+	local resumeTime = tick()
+	while tick() - resumeTime < timeAfterThreshold do
+		if not Steal.AutoStealEnabled then
+			isStealing = false; data.ready = true; setBar(0); return
+		end
+		local fin = (tick() - resumeTime) / math.max(timeAfterThreshold, 0.01)
+		setBar(threshold + fin * (1 - threshold))
+		task.wait()
+	end
+	setBar(1)
+	
+	for _, f in ipairs(data.trigger) do pcall(f) end
+	
+	if #data.trigger == 0 then
+		pcall(function()
+			if fireproximityprompt then
+				fireproximityprompt(prompt, 1)
+			elseif prompt:FindFirstChild("Activate") then
+				prompt.Activate:Fire()
+			else
+				for _, v in ipairs(prompt:GetChildren()) do
+					if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+						v:FireServer()
+					end
+				end
+			end
+		end)
+	end
+	
+	task.wait(0.05)
+	data.ready = true
+	isStealing = false
+	setBar(0)
+end
+
+local function startAutoSteal()
+	if stealConn then 
+		stealConn:Disconnect()
+	end
+	
+	local scanCounter = 0
+	stealConn = RunService.Heartbeat:Connect(function()
+		if isStealing or not Steal.AutoStealEnabled then return end
+		
+		scanCounter = scanCounter + 1
+		if scanCounter % 2 ~= 0 then return end
+		
+		local ok, prompt = pcall(findNearestPrompt)
+		if ok and prompt then
+			pcall(executeSteal, prompt)
+		end
+	end)
+	print("AutoSteal iniciado - Rose")
+end
+
+-- ============================================================
+-- UI PEMBE (ROSE)
+-- ============================================================
+pcall(function()
+	local old = pg:FindFirstChild("RoseAutoStealUI")
+	if old then old:Destroy() end
+end)
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "RoseAutoStealUI"
+gui.IgnoreGuiInset = true
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 200
+gui.Parent = pg
+
+local main = Instance.new("Frame")
+main.Name = "StealProgressGui"
+main.Active = true
+main.AnchorPoint = Vector2.new(0.5, 1)
+main.Position = UDim2.new(0.5, 0, 1, -100)
+main.Size = UDim2.new(0, 380, 0, 82)
+main.BackgroundColor3 = Color3.fromRGB(20, 10, 15)
+main.BackgroundTransparency = 0
+main.BorderSizePixel = 0
+main.Parent = gui
+Instance.new("UICorner", main).CornerRadius = UDim.new(0, 12)
+
+local mainStroke = Instance.new("UIStroke", main)
+mainStroke.Color = Color3.fromRGB(255, 105, 180)
+mainStroke.Thickness = 1.5
+
+-- AVATAR
+local avatarContainer = Instance.new("Frame", main)
+avatarContainer.Size = UDim2.new(0, 34, 0, 34)
+avatarContainer.Position = UDim2.new(0, 10, 0, 8)
+avatarContainer.BackgroundTransparency = 1
+
+local avatarImage = Instance.new("ImageLabel", avatarContainer)
+avatarImage.Size = UDim2.new(1, 0, 1, 0)
+avatarImage.BackgroundColor3 = Color3.fromRGB(30, 15, 25)
+avatarImage.BackgroundTransparency = 0.2
+avatarImage.BorderSizePixel = 0
+avatarImage.Image = "rbxassetid://0"
+avatarImage.ScaleType = Enum.ScaleType.Fit
+Instance.new("UICorner", avatarImage).CornerRadius = UDim.new(1, 0)
+local stroke = Instance.new("UIStroke", avatarImage)
+stroke.Color = Color3.fromRGB(255, 105, 180)
+stroke.Thickness = 1.2
+stroke.Transparency = 0.3
+
+task.spawn(function()
+	local success, url = pcall(function()
+		return Players:GetUserThumbnailAsync(LP.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size420x420)
+	end)
+	if success and url and url ~= "" then
+		avatarImage.Image = url
+	end
+end)
+
+-- TÍTULO
+title = Instance.new("TextLabel", main)
+title.BackgroundTransparency = 1
+title.Position = UDim2.new(0, 54, 0, 8)
+title.Size = UDim2.new(1, -60, 0, 18)
+title.Text = "0% | ROSE Auto Steal"
+title.TextColor3 = Color3.fromRGB(255, 150, 210)
+title.TextSize = 13
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+
+-- DISCORD LBL
+local infoRow = Instance.new("Frame", main)
+infoRow.Name = "InfoRow"
+infoRow.Size = UDim2.new(1, -24, 0, 18)
+infoRow.Position = UDim2.new(0, 12, 0, 30)
+infoRow.BackgroundTransparency = 1
+
+discordLbl = Instance.new("TextLabel", infoRow)
+discordLbl.BackgroundTransparency = 1
+discordLbl.Position = UDim2.new(0, 42, 0, 0)
+discordLbl.Size = UDim2.new(1, -42, 0, 18)
+discordLbl.Text = "Discord: https://discord.gg/tJddqg2aX"
+discordLbl.TextColor3 = Color3.fromRGB(255, 180, 225)
+discordLbl.Font = Enum.Font.GothamBold
+discordLbl.TextSize = 11
+discordLbl.TextXAlignment = Enum.TextXAlignment.Left
+
+-- BARRA PEMBE
+local barBg = Instance.new("Frame", main)
+barBg.Position = UDim2.new(0, 12, 0, 56)
+barBg.Size = UDim2.new(1, -24, 0, 12)
+barBg.BackgroundColor3 = Color3.fromRGB(40, 20, 30)
+barBg.BackgroundTransparency = 0
+barBg.BorderSizePixel = 0
+barBg.ClipsDescendants = true
+Instance.new("UICorner", barBg).CornerRadius = UDim.new(1, 0)
+
+progressFill = Instance.new("Frame", barBg)
+progressFill.Size = UDim2.new(0, 0, 1, 0)
+progressFill.BackgroundColor3 = Color3.fromRGB(255, 105, 180)
+progressFill.BorderSizePixel = 0
+Instance.new("UICorner", progressFill).CornerRadius = UDim.new(1, 0)
+
+-- DRAG
+local dragging, dragStart, startPos
+main.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		dragging = true
+		dragStart = input.Position
+		startPos = main.Position
+	end
+end)
+UIS.InputChanged:Connect(function(input)
+	if not dragging then return end
+	if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+		local d = input.Position - dragStart
+		main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+	end
+end)
+UIS.InputEnded:Connect(function() dragging = false end)
+
+-- ============================================================
+-- ROSE ON TOP (KARAKTERIN ÜSTÜNDE)
+-- ============================================================
+local function setupRoseTag(character)
+	local head = character:WaitForChild("Head", 5)
+	if not head then return end
+	
+	if head:FindFirstChild("RoseTagGui") then
+		head.RoseTagGui:Destroy()
+	end
+	
+	local bg = Instance.new("BillboardGui")
+	bg.Name = "RoseTagGui"
+	bg.Size = UDim2.new(0, 200, 0, 50)
+	bg.StudsOffset = Vector3.new(0, 3, 0)
+	bg.AlwaysOnTop = true
+	bg.Adornee = head
+	bg.Parent = head
+	
+	local lbl = Instance.new("TextLabel", bg)
+	lbl.Size = UDim2.new(1, 0, 1, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = "ROSE ON TOP"
+	lbl.TextColor3 = Color3.fromRGB(255, 105, 180)
+	lbl.TextStrokeColor3 = Color3.fromRGB(255, 255, 255)
+	lbl.TextStrokeTransparency = 0.2
+	lbl.TextSize = 24
+	lbl.Font = Enum.Font.FredokaOne
+end
+
+if LP.Character then
+	task.spawn(function() setupRoseTag(LP.Character) end)
+end
+LP.CharacterAdded:Connect(setupRoseTag)
+
+-- ============================================================
+-- INICIAR
+-- ============================================================
+startAutoSteal()
+print("ROSE AutoSteal cargado con éxito!")
